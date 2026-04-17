@@ -1,0 +1,74 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: incident-agent
+      POSTGRES_DB: incident-agent
+      # Local dev convenience: use trust auth (no password required).
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+
+  gateway:
+    image: python:3.12-slim
+    working_dir: /app
+    volumes:
+      - ./:/app
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: postgresql://incident-agent@postgres:5432/incident-agent
+      DEMO_BASE_URL: http://localhost:8002
+      GATEWAY_BASE_URL: http://localhost:8000
+    command: ["sh", "-c", "pip install -r requirements.txt && uvicorn gateway.main:app --host 0.0.0.0 --port 8000"]
+    depends_on:
+      - postgres
+      - redis
+    ports:
+      - "8000:8000"
+
+  agent:
+    image: python:3.12-slim
+    working_dir: /app
+    volumes:
+      - ./:/app
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: postgresql://incident-agent@postgres:5432/incident-agent
+      DEMO_BASE_URL: http://localhost:8002
+      GATEWAY_BASE_URL: http://gateway:8000
+    command: ["sh", "-c", "pip install -r requirements.txt && python -m agent.loop"]
+    depends_on:
+      - postgres
+      - redis
+
+  interface:
+    image: python:3.12-slim
+    working_dir: /app
+    volumes:
+      - ./:/app
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: postgresql://incident-agent@postgres:5432/incident-agent
+      DEMO_BASE_URL: http://localhost:8002
+      GATEWAY_BASE_URL: http://gateway:8000
+    command: ["sh", "-c", "pip install -r requirements.txt && uvicorn interface.main:app --host 0.0.0.0 --port 8002"]
+    depends_on:
+      - postgres
+      - redis
+      - gateway
+    ports:
+      - "8002:8002"
+
+volumes:
+  pgdata:
+  redisdata:
+
