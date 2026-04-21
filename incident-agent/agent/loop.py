@@ -15,6 +15,7 @@ from agent.remediation import plan_remediation
 from agent.tools import request_slack_approval_stub, wait_for_slack_approval_stub
 from agent.triage import run_triage
 from shared.config import settings
+from shared.debug_log import debug_log
 from shared.models import Alert, Incident
 from shared.timeline import append_timeline_event
 
@@ -88,6 +89,15 @@ async def ensure_consumer_group(*, redis_client: redis.Redis) -> None:
 
 async def run_incident(alert: Alert, *, redis_client: redis.Redis) -> Incident:
     incident_id = alert.fingerprint
+    # region agent log
+    debug_log(
+        run_id="pre-fix",
+        hypothesis_id="H3",
+        location="agent.loop:run_incident",
+        message="agent started incident",
+        data={"incident_id": incident_id, "service": alert.service, "severity": alert.severity},
+    )
+    # endregion
     await append_timeline_event(
         redis_client,
         incident_id=incident_id,
@@ -101,6 +111,15 @@ async def run_incident(alert: Alert, *, redis_client: redis.Redis) -> Incident:
     )
 
     triage_result = await run_triage(alert)
+    # region agent log
+    debug_log(
+        run_id="pre-fix",
+        hypothesis_id="H3",
+        location="agent.loop:run_incident",
+        message="agent triage completed",
+        data={"incident_id": incident_id, "risk_level": triage_result.risk_level},
+    )
+    # endregion
     await append_timeline_event(
         redis_client,
         incident_id=incident_id,
@@ -226,6 +245,15 @@ async def run_incident(alert: Alert, *, redis_client: redis.Redis) -> Incident:
         await asyncio.sleep(0)
 
     incident.status = "remediated"
+    # region agent log
+    debug_log(
+        run_id="pre-fix",
+        hypothesis_id="H3",
+        location="agent.loop:run_incident",
+        message="agent incident completed",
+        data={"incident_id": incident_id, "status": incident.status},
+    )
+    # endregion
     await append_timeline_event(
         redis_client,
         incident_id=incident_id,
@@ -272,9 +300,22 @@ async def consume_stream_forever(*, redis_client: redis.Redis) -> None:
 
 
 async def main() -> None:
+    # region agent log
+    debug_log(
+        run_id="pre-fix",
+        hypothesis_id="H3",
+        location="agent.loop:main",
+        message="agent main started",
+        data={"redis_url_configured": bool(settings.REDIS_URL)},
+    )
+    # endregion
     redis_client = redis.from_url(settings.REDIS_URL, decode_responses=True)
     try:
         await consume_stream_forever(redis_client=redis_client)
     finally:
         await redis_client.close()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
 

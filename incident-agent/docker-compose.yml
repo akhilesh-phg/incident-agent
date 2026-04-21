@@ -68,6 +68,26 @@ services:
     ports:
       - "8002:8002"
 
+  datadog-simulator:
+    image: python:3.12-slim
+    working_dir: /app
+    volumes:
+      - ./:/app
+    environment:
+      SIMULATOR_GATEWAY_URL: http://gateway:8000
+      REDIS_URL: redis://redis:6379/0
+      SIMULATOR_SERVICE: checkout-demo
+      SIMULATOR_ENV: demo
+      SIMULATOR_THRESHOLD_MS: 800
+      SIMULATOR_INTERVAL_SECONDS: 15
+      SIMULATOR_PATTERN: 220,260,310,420,760,980,1200,700,430,310
+      DATADOG_WEBHOOK_TOKEN: ${DATADOG_WEBHOOK_TOKEN:-}
+    command: ["sh", "-c", "pip install -r requirements.txt && python -m simulator.datadog_simulator --mode loop"]
+    depends_on:
+      - gateway
+    profiles:
+      - simulator
+
 volumes:
   pgdata:
   redisdata:

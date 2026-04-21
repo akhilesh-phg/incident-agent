@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 from gateway.dedup import dedupe_hit
 from gateway.normaliser import normalise_datadog, normalise_prometheus
 from shared.config import settings
+from shared.debug_log import debug_log
 from shared.models import Alert
 from shared.timeline import append_timeline_event
 
@@ -90,6 +91,21 @@ def _require_demo_trigger_token(request: Request) -> None:
 
 async def _handle_alert(alert: Alert) -> tuple[str, str]:
     r: redis.Redis = app.state.redis
+    # region agent log
+    debug_log(
+        run_id="pre-fix",
+        hypothesis_id="H2",
+        location="gateway.main:_handle_alert",
+        message="gateway handling alert",
+        data={
+            "source": alert.source,
+            "service": alert.service,
+            "alert_name": alert.alert_name,
+            "severity": alert.severity,
+            "fingerprint": alert.fingerprint,
+        },
+    )
+    # endregion
 
     logger.info(
         "alert received",
@@ -111,6 +127,15 @@ async def _handle_alert(alert: Alert) -> tuple[str, str]:
     )
 
     if await dedupe_hit(redis=r, alert_fingerprint=alert.fingerprint, window_seconds=300):
+        # region agent log
+        debug_log(
+            run_id="pre-fix",
+            hypothesis_id="H3",
+            location="gateway.main:_handle_alert",
+            message="gateway dedup branch taken",
+            data={"fingerprint": alert.fingerprint, "status": "deduped"},
+        )
+        # endregion
         logger.info(
             "dedup hit",
             fingerprint=alert.fingerprint,
@@ -130,6 +155,15 @@ async def _handle_alert(alert: Alert) -> tuple[str, str]:
         return ("deduped", alert.fingerprint)
 
     await r.xadd("alerts:incoming", _alert_to_stream_fields(alert))
+    # region agent log
+    debug_log(
+        run_id="pre-fix",
+        hypothesis_id="H2",
+        location="gateway.main:_handle_alert",
+        message="gateway enqueued alert to stream",
+        data={"stream": "alerts:incoming", "fingerprint": alert.fingerprint},
+    )
+    # endregion
     await append_timeline_event(
         r,
         incident_id=alert.fingerprint,
@@ -149,6 +183,15 @@ async def _handle_alert(alert: Alert) -> tuple[str, str]:
 async def webhook_datadog(request: Request) -> JSONResponse:
     _require_datadog_token(request)
     payload: dict[str, Any] = await request.json()
+    # region agent log
+    debug_log(
+        run_id="pre-fix",
+        hypothesis_id="H2",
+        location="gateway.main:webhook_datadog",
+        message="datadog webhook received",
+        data={"has_title": bool(payload.get("title")), "has_tags": isinstance(payload.get("tags"), list)},
+    )
+    # endregion
     try:
         alert = normalise_datadog(payload)
     except Exception as e:  # noqa: BLE001 - return a clean HTTP error

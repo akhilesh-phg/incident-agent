@@ -40,6 +40,39 @@ Recommended demo monitor pattern:
 - tags include `service:checkout-demo`
 - keep the title stable so the incident storyline is easy to narrate
 
+## No Datadog Subscription? Use the Built-In Simulator
+
+You can run a deterministic Datadog-style signal generator that posts realistic webhook payloads into the same ingestion endpoint.
+
+Run local stack plus simulator:
+
+```bash
+make dev-with-simulator
+```
+
+Or run simulator one-shot/loop manually:
+
+```bash
+make simulate-once
+make simulate-loop
+```
+
+What it does:
+- publishes Datadog-shaped webhook payloads to `POST /webhook/datadog`
+- uses a deterministic latency pattern so the demo is repeatable
+- emits both elevated and breached states via `priority` and tags
+- includes tags such as `monitor:synthetic-latency`, `latency_ms:*`, `tick:*`
+- can be controlled live from the demo UI (start/stop/rate/scenario/service/threshold)
+- includes a **Burst Now** control that forces an immediate high-severity event
+
+Key simulator env vars:
+- `SIMULATOR_GATEWAY_URL`
+- `SIMULATOR_SERVICE`
+- `SIMULATOR_ENV`
+- `SIMULATOR_THRESHOLD_MS`
+- `SIMULATOR_INTERVAL_SECONDS`
+- `SIMULATOR_PATTERN`
+
 ## Slack
 
 Install a demo Slack app/bot into the demo workspace or channel and grant:
@@ -56,6 +89,7 @@ High-risk incidents will post an approval request into Slack with hosted approve
 The interface app exposes:
 - `/` for the live incident timeline UI
 - `/api/timeline` for the raw event feed
+- `/api/simulator/control` for simulator runtime controls
 - `/approval/{approve|reject}/{incident_id}` for hosted approval callbacks
 
 Every major lifecycle step is written to the Redis stream `incidents:timeline`.
@@ -82,6 +116,31 @@ That makes the fingerprint and demo story deterministic while still flowing thro
 
 ```bash
 docker-compose up
+```
+
+With simulator profile:
+
+```bash
+docker-compose --profile simulator up
+```
+
+## Windows One-Click Scripts
+
+From PowerShell in the project root:
+
+```powershell
+cd "D:\incident-agent-github-primary\incident-agent"
+.\run-demo.ps1
+```
+
+Useful flags:
+- `.\run-demo.ps1 -NoBuild` (skip image rebuild)
+- `.\run-demo.ps1 -Detached` (run in background)
+
+Stop the stack:
+
+```powershell
+.\stop-demo.ps1
 ```
 
 Local endpoints:
