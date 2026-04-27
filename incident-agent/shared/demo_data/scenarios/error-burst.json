@@ -1,0 +1,13 @@
+{
+  "what_is_the_error": "Error rate for checkout has jumped sharply; HTTP 5xx or application exceptions are climbing relative to traffic.",
+  "likely_cause": "Bad deploy, misconfigured feature flag, database constraint failures, or an upstream outage causing cascading errors.",
+  "remediation_suggestions": [
+    "Triage logs for the dominant exception class and failing endpoint.",
+    "If tied to a new release, roll back or disable the offending feature flag.",
+    "Verify database migrations and connection health.",
+    "Engage on-call for payments if errors cluster on payment callbacks."
+  ],
+  "triage_summary": "High-severity error burst on checkout-demo: errors increasing quickly; treat as release or dependency regression until proven otherwise.",
+  "suspected_cause": "Recent code change or brittle dependency handling under load.",
+  "recommended_runbooks": ["checkout-demo__error_burst", "generic__rollback_checklist"]
+}

@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Acme Corp — SRE Command</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              acme: { navy: "#0b1426", slate: "#111c33", amber: "#f59e0b", mist: "#94a3b8" },
+            },
+          },
+        },
+      };
+    </script>
+  </head>
+  <body class="min-h-screen bg-gradient-to-b from-acme-navy to-[#060b14] text-slate-100">
+    <header class="border-b border-slate-800 bg-acme-slate/40 backdrop-blur">
+      <div class="mx-auto flex max-w-6xl flex-col gap-4 px-6 py-6 md:flex-row md:items-center md:justify-between">
+        <div>
+          <div class="text-xs uppercase tracking-[0.2em] text-acme-mist">Demo command center</div>
+          <h1 class="text-3xl font-semibold text-white">Acme Corp <span class="text-acme-amber">SRE</span></h1>
+          <p class="mt-1 max-w-xl text-sm text-acme-mist">
+            Incident timeline, simulator, static triage-backed history, and a no-LLM chat for stakeholder demos.
+          </p>
+        </div>
+        <nav id="nav" class="flex flex-wrap gap-2"></nav>
+      </div>
+    </header>
+    <main class="mx-auto max-w-6xl px-6 py-8" id="main"></main>
+    <div
+      id="modal"
+      class="fixed inset-0 z-50 hidden items-center justify-center bg-black/70 p-4"
+      onclick="window.acmeCloseModal(event)"
+    >
+      <div
+        id="modal-inner"
+        class="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-xl border border-slate-600 bg-acme-navy p-6 shadow-2xl"
+        onclick="event.stopPropagation()"
+      ></div>
+    </div>
+    <script>
+      (function () {
+        const tabs = [
+          { id: "overview", label: "Overview" },
+          { id: "incidents", label: "Incidents" },
+          { id: "live", label: "Live + simulator" },
+          { id: "chat", label: "Chat" },
+        ];
+        let tab = "overview";
+        let metrics = null;
+        let history = [];
+        let chatLog = [];
+        let chatScenario = "latency-spike";
+
+        function escapeHtml(s) {
+          return String(s)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;");
+        }
+
+        function metricCard(label, value, sub) {
+          return `<div class="rounded-xl border border-slate-700 bg-acme-slate/40 p-4">
+            <div class="text-xs uppercase tracking-wide text-acme-mist">${escapeHtml(label)}</div>
+            <div class="mt-2 text-2xl font-semibold text-white">${escapeHtml(value)}</div>
+            <div class="mt-1 text-xs text-slate-400">${escapeHtml(sub)}</div>
+          </div>`;
+        }
+
+        function barRow(prefix, values, colorClass) {
+          const max = Math.max(1, ...values);
+          return `<div class="flex gap-2">${values
+            .map(
+              (v, i) =>
+                `<div class="flex flex-1 flex-col items-center gap-1">
+              <div class="flex h-32 w-full items-end rounded bg-slate-800/80">
+                <div class="w-full rounded-t ${colorClass}" style="height:${Math.max(6, (v / max) * 100)}%"></div>
+              </div>
+              <span class="text-[10px] text-acme-mist">${escapeHtml(prefix + (i + 1))}</span>
+            </div>`,
+            )
+            .join("")}</div>`;
+        }
+
+        function renderNav() {
+          const nav = document.getElementById("nav");
+          nav.innerHTML = tabs
+            .map(
+              (t) =>
+                `<button type="button" class="rounded-lg px-4 py-2 text-sm font-medium transition ${
+                  tab === t.id ? "bg-acme-amber text-acme-navy" : "bg-acme-slate text-slate-200 hover:bg-slate-700"
+                }" data-tab="${t.id}">${t.label}</button>`,
+            )
+            .join("");
+          nav.querySelectorAll("button").forEach((b) => {
+            b.addEventListener("click", () => {
+              tab = b.dataset.tab;
+              render();
+            });
+          });
+        }
+
+        function renderOverview() {
+          if (!metrics) return `<p class="text-acme-mist">Loading metrics…</p>`;
+          const s = metrics.series;
+          return `<section class="space-y-8">
+            <div class="grid gap-4 md:grid-cols-3">
+              ${metricCard("Total deployments", metrics.deployments_total, "p (demo)")}
+              ${metricCard("Deployment frequency", metrics.deployment_frequency_per_day + " / day", "x/day (demo)")}
+              ${metricCard("Typical duration", metrics.deployment_duration_minutes + " min", "y minutes (demo)")}
+              ${metricCard("Failures (30d)", metrics.deployment_failures_30d, "z (demo)")}
+              ${metricCard("Downtime (6 mo)", metrics.percent_downtime_6mo + "%", "q% over r months (demo)")}
+              ${metricCard("Program", metrics.label, "Fixed demo numbers")}
+            </div>
+            <div class="grid gap-6 md:grid-cols-2">
+              <div class="rounded-xl border border-slate-700 bg-acme-slate/40 p-4">
+                <div class="mb-2 text-sm font-semibold text-acme-amber">Deployments per week (demo)</div>
+                ${barRow("W", s.deployments_per_week, "bg-amber-500")}
+              </div>
+              <div class="rounded-xl border border-slate-700 bg-acme-slate/40 p-4">
+                <div class="mb-2 text-sm font-semibold text-acme-amber">Incident minutes / week (demo)</div>
+                ${barRow("W", s.incident_minutes_per_week, "bg-sky-500")}
+              </div>
+            </div>
+          </section>`;
+        }
+
+        function renderIncidents() {
+          const rows = history
+            .map(
+              (row) =>
+                `<tr class="cursor-pointer border-t border-slate-800 hover:bg-slate-800/60" data-id="${escapeHtml(row.id)}">
+              <td class="px-4 py-3 text-xs text-slate-300">${escapeHtml(row.created_at)}</td>
+              <td class="px-4 py-3">${escapeHtml(row.service)}</td>
+              <td class="px-4 py-3">${row.scenario != null ? escapeHtml(row.scenario) : "—"}</td>
+              <td class="px-4 py-3">${row.outcome != null ? escapeHtml(row.outcome) : "—"}</td>
+            </tr>`,
+            )
+            .join("");
+          return `<section class="space-y-4">
+          <div class="overflow-hidden rounded-xl border border-slate-700 bg-acme-slate/40">
+            <table class="w-full text-left text-sm">
+              <thead class="bg-acme-slate/80 text-xs uppercase text-acme-mist">
+                <tr><th class="px-4 py-3">Time</th><th class="px-4 py-3">Service</th><th class="px-4 py-3">Scenario</th><th class="px-4 py-3">Outcome</th></tr>
+              </thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>
+          <div class="rounded-xl border border-slate-700 bg-acme-slate/30 p-4">
+            <div class="text-sm font-semibold text-acme-amber">Demo reset</div>
+            <p class="mt-1 text-xs text-acme-mist">Requires DEMO_ADMIN_FLUSH_TOKEN on the server.</p>
+            <div class="mt-3 flex flex-wrap gap-2">
+              <input id="flush-token" class="min-w-[200px] flex-1 rounded-lg border border-slate-600 bg-acme-navy px-3 py-2 text-sm" placeholder="Admin flush token" />
+              <button type="button" id="flush-btn" class="rounded-lg bg-red-700 px-4 py-2 text-sm font-medium text-white hover:bg-red-600">Flush history</button>
+            </div>
+            <p id="flush-msg" class="mt-2 text-xs text-slate-300"></p>
+          </div>
+        </section>`;
+        }
+
+        function renderLive() {
+          return `<section class="space-y-3">
+          <p class="text-sm text-acme-mist">Legacy operator UI — same APIs as before.</p>
+          <iframe title="Legacy" src="/legacy" class="h-[720px] w-full rounded-xl border border-slate-700 bg-white"></iframe>
+        </section>`;
+        }
+
+        function renderChat() {
+          const log = chatLog
+            .map(
+              (m) =>
+                `<div class="max-w-[90%] rounded-lg px-3 py-2 text-sm ${
+                  m.role === "user" ? "ml-auto bg-sky-900/60 text-sky-50" : "mr-auto bg-slate-800 text-slate-100"
+                }">${escapeHtml(m.text)}</div>`,
+            )
+            .join("");
+          return `<section class="grid gap-4 md:grid-cols-[2fr,1fr]">
+          <div class="flex h-[480px] flex-col rounded-xl border border-slate-700 bg-acme-slate/40">
+            <div id="chat-scroll" class="flex-1 space-y-3 overflow-y-auto p-4">${log}</div>
+            <div class="border-t border-slate-700 p-3">
+              <textarea id="chat-input" class="mb-2 w-full rounded-lg border border-slate-600 bg-acme-navy px-3 py-2 text-sm" rows="3" placeholder="Message the demo assistant…"></textarea>
+              <button type="button" id="chat-send" class="rounded-lg bg-acme-amber px-4 py-2 text-sm font-semibold text-acme-navy">Send</button>
+            </div>
+          </div>
+          <div class="rounded-xl border border-slate-700 bg-acme-slate/30 p-4 text-sm">
+            <label class="block text-xs font-semibold uppercase text-acme-mist">Scenario hint</label>
+            <select id="chat-scenario" class="mt-2 w-full rounded-lg border border-slate-600 bg-acme-navy px-3 py-2">
+              <option value="latency-spike">latency-spike</option>
+              <option value="error-burst">error-burst</option>
+              <option value="cpu-brownout">cpu-brownout</option>
+            </select>
+            <p class="mt-4 text-xs text-acme-mist">No LLM tokens — canned scenario text and safe simulator commands.</p>
+          </div>
+        </section>`;
+        }
+
+        function jsonBlock(title, data) {
+          return `<div class="rounded-lg border border-slate-700 bg-acme-slate/60 p-3">
+            <div class="mb-2 text-sm font-semibold text-acme-amber">${escapeHtml(title)}</div>
+            <pre class="max-h-64 overflow-auto text-xs text-slate-200">${escapeHtml(JSON.stringify(data, null, 2))}</pre>
+          </div>`;
+        }
+
+        async function openDetail(id) {
+          const r = await fetch("/api/incidents/history/" + id);
+          if (!r.ok) return;
+          const d = await r.json();
+          document.getElementById("modal-inner").innerHTML = `
+            <div class="mb-4 flex items-center justify-between">
+              <h2 class="text-lg font-semibold text-white">Incident log</h2>
+              <button type="button" class="text-sm text-acme-amber" onclick="document.getElementById('modal').classList.add('hidden');document.getElementById('modal').classList.remove('flex')">Close</button>
+            </div>
+            <div class="grid gap-3 md:grid-cols-2">
+              ${jsonBlock("triage", d.triage)}
+              ${jsonBlock("remediation", d.remediation)}
+              ${jsonBlock("presented_to_user", d.presented_to_user)}
+              ${jsonBlock("meta", { id: d.id, created_at: d.created_at, outcome: d.outcome })}
+            </div>`;
+          const m = document.getElementById("modal");
+          m.classList.remove("hidden");
+          m.classList.add("flex");
+        }
+
+        window.acmeCloseModal = function (ev) {
+          if (ev.target.id === "modal") {
+            const m = document.getElementById("modal");
+            m.classList.add("hidden");
+            m.classList.remove("flex");
+          }
+        };
+
+        async function sendChat() {
+          const input = document.getElementById("chat-input");
+          const text = input.value.trim();
+          if (!text) return;
+          input.value = "";
+          chatLog.push({ role: "user", text });
+          render();
+          const r = await fetch("/api/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message: text, scenario: chatScenario }),
+          });
+          const j = await r.json();
+          chatLog.push({ role: "assistant", text: j.reply || j.detail || "No response" });
+          render();
+          const sc = document.getElementById("chat-scroll");
+          if (sc) sc.scrollTop = sc.scrollHeight;
+        }
+
+        async function render() {
+          renderNav();
+          const main = document.getElementById("main");
+          if (tab === "overview") {
+            if (!metrics) {
+              const res = await fetch("/api/dashboard/metrics");
+              if (res.ok) metrics = await res.json();
+            }
+            main.innerHTML = renderOverview();
+          } else if (tab === "incidents") {
+            const res = await fetch("/api/incidents/history?limit=50");
+            if (res.ok) {
+              const j = await res.json();
+              history = j.items || [];
+            }
+            main.innerHTML = renderIncidents();
+            document.querySelectorAll("tbody tr[data-id]").forEach((tr) => {
+              tr.addEventListener("click", () => openDetail(tr.getAttribute("data-id")));
+            });
+            const fb = document.getElementById("flush-btn");
+            if (fb) {
+              fb.onclick = async () => {
+                const tok = document.getElementById("flush-token").value;
+                const r = await fetch("/api/admin/incidents/flush", {
+                  method: "POST",
+                  headers: { "X-Demo-Admin-Token": tok },
+                });
+                const j = await r.json().catch(() => ({}));
+                document.getElementById("flush-msg").textContent = r.ok
+                  ? "Flushed (" + (j.deleted_rows ?? 0) + " rows)."
+                  : j.detail || "Flush failed";
+                await render();
+              };
+            }
+          } else if (tab === "live") {
+            main.innerHTML = renderLive();
+          } else if (tab === "chat") {
+            main.innerHTML = renderChat();
+            const sel = document.getElementById("chat-scenario");
+            sel.value = chatScenario;
+            sel.onchange = () => (chatScenario = sel.value);
+            document.getElementById("chat-send").onclick = sendChat;
+            const sc = document.getElementById("chat-scroll");
+            if (sc) sc.scrollTop = sc.scrollHeight;
+          }
+        }
+
+        render();
+      })();
+    </script>
+  </body>
+</html>

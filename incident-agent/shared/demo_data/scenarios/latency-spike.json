@@ -1,0 +1,13 @@
+{
+  "what_is_the_error": "End-to-end latency for checkout has crossed the SLO threshold; p95 response time is elevated and user-facing pages are slow.",
+  "likely_cause": "Downstream dependency (payments or inventory) is slow, cache hit rate dropped, or a recent deployment increased per-request work.",
+  "remediation_suggestions": [
+    "Check service dashboards for dependency latency and error rates.",
+    "Validate recent deploys; consider a fast rollback if correlated with the spike.",
+    "Scale checkout replicas temporarily if CPU or connection pools are saturated.",
+    "Warm caches or tune timeouts only after confirming root cause."
+  ],
+  "triage_summary": "High-severity latency spike on checkout-demo: sustained elevated latency consistent with dependency slowdown or capacity pressure.",
+  "suspected_cause": "Downstream latency or insufficient capacity after a change.",
+  "recommended_runbooks": ["checkout-demo__latency_runbook", "generic__rollback_checklist"]
+}

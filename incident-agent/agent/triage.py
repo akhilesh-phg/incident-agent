@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from shared.models import Alert, TriageResult
-from shared.models import RiskLevel
+from shared.demo_triage import load_demo_triage
+from shared.models import Alert, RiskLevel, TriageResult
 from agent.memory import get_top_runbooks
 
 
@@ -18,8 +18,11 @@ def _risk_from_severity(severity: str) -> RiskLevel:
 
 
 async def run_triage(alert: Alert) -> TriageResult:
-    risk_level = _risk_from_severity(alert.severity)
+    static = load_demo_triage(alert)
+    if static is not None:
+        return static
 
+    risk_level = _risk_from_severity(alert.severity)
     suspected_cause = None
     recommended_runbooks = await get_top_runbooks(alert)
 

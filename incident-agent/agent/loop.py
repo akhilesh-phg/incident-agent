@@ -14,9 +14,17 @@ from redis.exceptions import ResponseError
 from agent.remediation import plan_remediation
 from agent.tools import request_slack_approval_stub, wait_for_slack_approval_stub
 from agent.triage import run_triage
+from interface.slack_bot import post_incident_context_alert
 from shared.config import settings
 from shared.debug_log import debug_log
-from shared.models import Alert, Incident
+from shared.demo_triage import demo_slack_fields, presented_user_snapshot, scenario_key_from_alert
+from shared.incident_history import (
+    close_incident_history_pool,
+    init_incident_history_pool,
+    insert_incident_log_safe,
+    list_similar_scenario_safe,
+)
+from shared.models import Alert, Incident, RemediationPlan, TriageResult
 from shared.timeline import append_timeline_event
 
 
@@ -87,6 +95,50 @@ async def ensure_consumer_group(*, redis_client: redis.Redis) -> None:
             raise
 
 
+def _similar_incidents_text(similar: dict[str, Any] | None) -> str | None:
+    if not similar:
+        return None
+    count = similar.get("count")
+    last_at = similar.get("last_at")
+    last_action = similar.get("last_action") or "unknown"
+    return (
+        f"Similar incidents (same scenario + service): {count} in history. "
+        f"Most recent at {last_at}; last recorded action/outcome: {last_action}."
+    )
+
+
+async def _persist_incident_history(
+    *,
+    alert: Alert,
+    incident: Incident,
+    triage_result: TriageResult,
+    remediation_plan: RemediationPlan | None,
+    similar: dict[str, Any] | None,
+    demo_fields: dict[str, Any] | None,
+) -> None:
+    presented = presented_user_snapshot(
+        alert,
+        triage_result,
+        demo_fields=demo_fields,
+        similar=similar,
+    )
+    if remediation_plan is not None:
+        presented["remediation"] = remediation_plan.model_dump()
+
+    await insert_incident_log_safe(
+        incident_fingerprint=alert.fingerprint,
+        scenario=scenario_key_from_alert(alert),
+        service=alert.service,
+        alert_name=alert.alert_name,
+        severity=alert.severity,
+        triage=triage_result.model_dump(),
+        remediation=(remediation_plan.model_dump() if remediation_plan is not None else {}),
+        presented_to_user=presented,
+        outcome=incident.status,
+        action_taken=incident.status,
+    )
+
+
 async def run_incident(alert: Alert, *, redis_client: redis.Redis) -> Incident:
     incident_id = alert.fingerprint
     # region agent log
@@ -120,6 +172,20 @@ async def run_incident(alert: Alert, *, redis_client: redis.Redis) -> Incident:
         data={"incident_id": incident_id, "risk_level": triage_result.risk_level},
     )
     # endregion
+    scenario_key = scenario_key_from_alert(alert)
+    similar = await list_similar_scenario_safe(scenario=scenario_key, service=alert.service)
+    demo_fields = demo_slack_fields(alert)
+    dashboard_url = f"{settings.DEMO_BASE_URL.rstrip('/')}/#incidents"
+
+    await post_incident_context_alert(
+        incident_id=incident_id,
+        triage=triage_result,
+        plan=None,
+        similar_incidents_text=_similar_incidents_text(similar),
+        demo_fields=demo_fields,
+        dashboard_url=dashboard_url,
+    )
+
     await append_timeline_event(
         redis_client,
         incident_id=incident_id,
@@ -130,7 +196,12 @@ async def run_incident(alert: Alert, *, redis_client: redis.Redis) -> Incident:
         source=alert.source,
         alert_name=alert.alert_name,
         severity=triage_result.severity,
-        metadata={"risk_level": triage_result.risk_level, "runbooks": triage_result.recommended_runbooks},
+        metadata={
+            "risk_level": triage_result.risk_level,
+            "runbooks": triage_result.recommended_runbooks,
+            "similar_incidents": similar,
+            "scenario": scenario_key,
+        },
     )
     remediation_plan = await plan_remediation(alert, triage_result)
     await append_timeline_event(
@@ -204,6 +275,14 @@ async def run_incident(alert: Alert, *, redis_client: redis.Redis) -> Incident:
             severity=alert.severity,
             metadata={"approved": approved},
         )
+        await _persist_incident_history(
+            alert=alert,
+            incident=incident,
+            triage_result=triage_result,
+            remediation_plan=remediation_plan,
+            similar=similar,
+            demo_fields=demo_fields,
+        )
         return incident
 
     # Execute remediation steps as stubs.
@@ -220,6 +299,14 @@ async def run_incident(alert: Alert, *, redis_client: redis.Redis) -> Incident:
             approved = await wait_for_slack_approval_stub(redis_client=redis_client, incident_id=incident_id)
             if not approved:
                 incident.status = "failed"
+                await _persist_incident_history(
+                    alert=alert,
+                    incident=incident,
+                    triage_result=triage_result,
+                    remediation_plan=remediation_plan,
+                    similar=similar,
+                    demo_fields=demo_fields,
+                )
                 return incident
 
         logger.info(
@@ -265,6 +352,14 @@ async def run_incident(alert: Alert, *, redis_client: redis.Redis) -> Incident:
         alert_name=alert.alert_name,
         severity=alert.severity,
     )
+    await _persist_incident_history(
+        alert=alert,
+        incident=incident,
+        triage_result=triage_result,
+        remediation_plan=remediation_plan,
+        similar=similar,
+        demo_fields=demo_fields,
+    )
     return incident
 
 
@@ -309,11 +404,17 @@ async def main() -> None:
         data={"redis_url_configured": bool(settings.REDIS_URL)},
     )
     # endregion
+    try:
+        await init_incident_history_pool()
+    except Exception:
+        logger.exception("incident history pool init failed; continuing without DB persistence")
+
     redis_client = redis.from_url(settings.REDIS_URL, decode_responses=True)
     try:
         await consume_stream_forever(redis_client=redis_client)
     finally:
         await redis_client.close()
+        await close_incident_history_pool()
 
 
 if __name__ == "__main__":

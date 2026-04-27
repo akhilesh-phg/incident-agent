@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import logging
+from typing import Any
 from urllib.parse import urlencode
 
 import httpx
@@ -108,4 +109,131 @@ async def post_diagnosis_summary(
         plan_approval_required=plan.approval_required,
         slack_channel_id=channel_id,
     )
+
+
+def _slack_mrkdwn_escape(text: str) -> str:
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _blocks_for_incident_context(
+    *,
+    incident_id: str,
+    triage: TriageResult,
+    plan: RemediationPlan | None,
+    similar_incidents_text: str | None,
+    demo_fields: dict[str, Any] | None,
+    dashboard_url: str,
+) -> list[dict[str, Any]]:
+    if demo_fields:
+        what = demo_fields.get("what_is_the_error") or triage.summary
+        likely = demo_fields.get("likely_cause") or triage.suspected_cause or "Not specified."
+        rem_lines = demo_fields.get("remediation_suggestions") or []
+    else:
+        what = triage.summary
+        likely = triage.suspected_cause or "Not specified."
+        rem_lines = []
+        if plan:
+            rem_lines = [f"• {s.title}" + (f": {s.description}" if s.description else "") for s in plan.steps]
+
+    remediation_body = "\n".join(_slack_mrkdwn_escape(str(line)) for line in rem_lines) if rem_lines else "_No remediation list yet._"
+
+    blocks: list[dict[str, Any]] = [
+        {"type": "header", "text": {"type": "plain_text", "text": "Incident context (Acme demo)", "emoji": True}},
+        {
+            "type": "section",
+            "fields": [
+                {"type": "mrkdwn", "text": f"*Incident ID*\n`{_slack_mrkdwn_escape(incident_id)}`"},
+                {"type": "mrkdwn", "text": f"*Severity / risk*\n{_slack_mrkdwn_escape(triage.severity)} / {_slack_mrkdwn_escape(triage.risk_level)}"},
+            ],
+        },
+        {"type": "divider"},
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": f"*What is this error?*\n{_slack_mrkdwn_escape(str(what))}"},
+        },
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": f"*Likely cause*\n{_slack_mrkdwn_escape(str(likely))}"},
+        },
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": f"*Remediation*\n{remediation_body}"},
+        },
+    ]
+
+    if triage.recommended_runbooks:
+        rb = ", ".join(f"`{_slack_mrkdwn_escape(s)}`" for s in triage.recommended_runbooks)
+        blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": f"*Recommended runbooks*\n{rb}"}})
+
+    if similar_incidents_text:
+        blocks.append(
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": f"*Similar incidents*\n{_slack_mrkdwn_escape(similar_incidents_text)}"},
+            }
+        )
+
+    blocks.append(
+        {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": f"*Dashboard*\n<{_slack_mrkdwn_escape(dashboard_url)}|Open Acme incident dashboard>"},
+        }
+    )
+    return blocks
+
+
+async def post_incident_context_alert(
+    *,
+    incident_id: str,
+    triage: TriageResult,
+    plan: RemediationPlan | None,
+    similar_incidents_text: str | None,
+    demo_fields: dict[str, Any] | None,
+    dashboard_url: str,
+) -> None:
+    """
+    Post triage-oriented incident context using Slack Block Kit. Fails soft (logs only).
+    """
+
+    bot_token = settings.SLACK_BOT_TOKEN.get_secret_value() if settings.SLACK_BOT_TOKEN else None
+    channel_id = settings.SLACK_CHANNEL_ID
+    if not bot_token or not channel_id:
+        logger.info(
+            "post incident context to Slack skipped",
+            incident_id=incident_id,
+            reason="missing_slack_configuration",
+        )
+        return
+
+    blocks = _blocks_for_incident_context(
+        incident_id=incident_id,
+        triage=triage,
+        plan=plan,
+        similar_incidents_text=similar_incidents_text,
+        demo_fields=demo_fields,
+        dashboard_url=dashboard_url,
+    )
+    fallback = f"Incident {incident_id}: {triage.summary}"
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                "https://slack.com/api/chat.postMessage",
+                headers={"Authorization": f"Bearer {bot_token}"},
+                json={"channel": channel_id, "text": fallback, "blocks": blocks},
+            )
+            response.raise_for_status()
+            payload = response.json()
+            if not payload.get("ok"):
+                logger.warning(
+                    "Slack chat.postMessage returned error",
+                    incident_id=incident_id,
+                    error=payload.get("error"),
+                )
+                return
+    except Exception:
+        logger.exception("Slack incident context post failed", incident_id=incident_id)
+        return
+
+    logger.info("posted incident context to Slack", incident_id=incident_id, slack_channel_id=channel_id)
 

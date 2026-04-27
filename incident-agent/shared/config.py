@@ -24,6 +24,10 @@ class Settings(BaseSettings):
 
     # Agent behavior
     REQUIRE_APPROVAL: bool = False
+    USE_DEMO_STATIC_TRIAGE: bool = True
+
+    # Demo admin (optional): protects incident history flush endpoint
+    DEMO_ADMIN_FLUSH_TOKEN: SecretStr | None = None
 
     # Hosted demo configuration
     DEMO_HOSTING_TARGET: str = "render"

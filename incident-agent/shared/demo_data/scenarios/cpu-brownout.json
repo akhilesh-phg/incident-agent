@@ -1,0 +1,13 @@
+{
+  "what_is_the_error": "Checkout pods are CPU-throttled; latency rises while error rates may still look acceptable until timeouts occur.",
+  "likely_cause": "Insufficient CPU limits/requests, hot loops introduced in code, noisy neighbor workloads, or traffic shift without autoscaling headroom.",
+  "remediation_suggestions": [
+    "Inspect CPU saturation and throttling metrics per pod.",
+    "Raise CPU requests/limits temporarily if clearly capacity-bound.",
+    "Profile or diff recent changes for unexpected CPU burn.",
+    "Scale out horizontally if the service is horizontally scalable."
+  ],
+  "triage_summary": "Medium/high CPU brownout on checkout-demo: latency creep typical of CPU starvation or inefficient hot paths.",
+  "suspected_cause": "CPU limits too low for current load or regression increasing CPU per request.",
+  "recommended_runbooks": ["generic__capacity_review", "checkout-demo__latency_runbook"]
+}

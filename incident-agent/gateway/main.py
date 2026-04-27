@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
+import time
+from pathlib import Path
 from datetime import datetime, timezone
 from typing import Any
 
@@ -39,8 +41,49 @@ app = FastAPI(title="Incident-Agent Gateway")
 
 @app.on_event("startup")
 async def _startup() -> None:
+    # region agent log
+    _gwlog = Path(__file__).resolve().parents[1] / "debug-85746a.log"
+    try:
+        with _gwlog.open("a", encoding="utf-8") as _f:
+            _f.write(
+                json.dumps(
+                    {
+                        "sessionId": "85746a",
+                        "timestamp": int(time.time() * 1000),
+                        "location": "gateway/main.py:_startup",
+                        "message": "startup_begin",
+                        "hypothesisId": "H2",
+                        "data": {"redis_url_set": bool(settings.REDIS_URL)},
+                    },
+                    default=str,
+                )
+                + "\n"
+            )
+    except Exception:
+        pass
+    # endregion
     # decode_responses=True means we store values as `str` in the stream.
     app.state.redis = redis.from_url(settings.REDIS_URL, decode_responses=True)
+    # region agent log
+    try:
+        with _gwlog.open("a", encoding="utf-8") as _f:
+            _f.write(
+                json.dumps(
+                    {
+                        "sessionId": "85746a",
+                        "timestamp": int(time.time() * 1000),
+                        "location": "gateway/main.py:_startup",
+                        "message": "redis_client_created",
+                        "hypothesisId": "H2",
+                        "data": {},
+                    },
+                    default=str,
+                )
+                + "\n"
+            )
+    except Exception:
+        pass
+    # endregion
 
 
 @app.on_event("shutdown")

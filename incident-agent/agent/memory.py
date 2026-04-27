@@ -7,6 +7,7 @@ from pgvector.asyncpg import register_vector
 
 from shared.config import settings
 from shared.db import create_pool
+from shared.demo_triage import scenario_key_from_alert, load_demo_pack
 from shared.models import Alert
 
 
@@ -67,7 +68,15 @@ async def get_top_runbooks(alert: Alert, *, top_k: int = 2) -> list[str]:
     Behavior:
       - If database or embedding infrastructure is unavailable, falls back
         to an empty list rather than failing the incident pipeline.
+      - Demo mode: when static triage packs apply, return their runbooks without embeddings.
     """
+
+    if settings.USE_DEMO_STATIC_TRIAGE:
+        key = scenario_key_from_alert(alert)
+        if key:
+            pack = load_demo_pack(key)
+            if pack is not None:
+                return list(pack.recommended_runbooks[:top_k])
 
     try:
         query_text = _build_query_text(alert)
